@@ -1,0 +1,48 @@
+#!/bin/sh
+
+profile="rds"
+startDate=`date +%Y-%m-%d -d "2 day ago"`
+endDate=`date +%Y-%m-%d -d "1 day ago"`
+echo $startDate $endDate
+currentDate=daily_costs_$(date +"%F_%T" -d "2 day ago").csv
+touch $currentDate
+
+echo $currentDate
+
+N=`aws ce get-cost-and-usage \
+    --time-period Start=$startDate,End=$endDate \
+    --granularity DAILY \
+    --metrics  'NET_UNBLENDED_COST' --profile $profile --group-by Type='DIMENSION',Key='LINKED_ACCOUNT' --output text --query 'ResultsByTime[*].Groups[*].[Keys]' | wc -l`
+
+echo "Account Name, Account ID, Total Amount" > $currentDate
+for((i=1;i<N;i++))
+do
+
+accountID=`aws ce get-cost-and-usage \
+    --time-period Start=$startDate,End=$endDate \
+    --granularity DAILY \
+    --metrics  'NET_UNBLENDED_COST' --profile $profile --group-by Type='DIMENSION',Key='LINKED_ACCOUNT' --output text --query "ResultsByTime[*].Groups[$i].[Keys]"`
+amount=`aws ce get-cost-and-usage \
+    --time-period Start=$startDate,End=$endDate \
+    --granularity DAILY \
+    --metrics  'NET_UNBLENDED_COST' --profile $profile --group-by Type='DIMENSION',Key='LINKED_ACCOUNT' --output text --query "ResultsByTime[*].Groups[$i].[Metrics.NetUnblendedCost.Amount]"`
+accoutName=`aws ce get-cost-and-usage \
+    --time-period Start=$startDate,End=$endDate \
+    --granularity DAILY \
+    --metrics  'NET_UNBLENDED_COST' --profile $profile --group-by Type='DIMENSION',Key='LINKED_ACCOUNT' --output text --query "DimensionValueAttributes[$i].Attributes.description"`
+
+
+echo $accoutName, $accountID, $amount >> $currentDate
+echo "Updated $accoutName"
+
+done
+
+total=`aws ce get-cost-and-usage \
+    --time-period Start=$startDate,End=$endDate \
+    --granularity DAILY \
+    --metrics  'NET_UNBLENDED_COST' --profile $profile --output text --query "ResultsByTime[*].Total.NetUnblendedCost.Amount"`
+echo "-","Total",$total >> $currentDate
+echo "Updated All Accounts..."
+output=`aws s3 cp $currentDate s3://daily-costs-data --profile rds`
+echo "$output   $? `TZ=IST-5:30 date`" >> costs_s3_upload.logs
+rm $currentDate
